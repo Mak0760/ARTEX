@@ -444,7 +444,7 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
 
-<Card className="mb-4 break-inside-avoid md:mb-6 lg:[column-span:all]">
+        <Card className="mb-4 break-inside-avoid md:mb-6 lg:[column-span:all]">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <ShieldAlertIcon className="size-4" />
