@@ -85,6 +85,7 @@ import type {
   TaskAssetMutation,
   TaskAssetScopeMutation,
   TaskCategory,
+  AllTaskConstraint,
   TaskConstraint,
   TaskGoal,
   TaskLLMResolutions,
@@ -1262,6 +1263,21 @@ export const api = {
     });
     if (!r.ok) throw new Error(await r.text());
   },
+
+  // ---- 约束与护栏总览（系统设置）----
+  // 全部任务的操作约束 + 当前全局护栏文本/总开关，供系统设置一处查看与自定义。
+  allConstraints: () =>
+    get<{
+      constraints: AllTaskConstraint[] | null;
+      guardrails: string;
+      guardrails_text: string;
+      guardrails_enabled: boolean;
+    }>(`/constraints`).then((r) => ({
+      constraints: arr(r.constraints),
+      guardrails: r.guardrails ?? "",
+      guardrailsText: r.guardrails_text ?? "",
+      guardrailsEnabled: r.guardrails_enabled !== false,
+    })),
 
   // ---- intercept LLM judge (模型兜底审批,全局配置) ----
   interceptGetJudgeConfig: () => get<JudgeConfig>("/intercept/judge"),

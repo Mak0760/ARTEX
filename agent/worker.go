@@ -74,6 +74,7 @@ type Worker struct {
 	// injected into the worker system prompt. Read per run so the settings toggle
 	// takes effect without rebuilding the agent. nil = inject (default).
 	injectConstraints func() bool
+	globalGuardrails  func() string // resolver: operator's global guardrail text ("" = none)
 	// nonStreamingFn resolves whether this run uses the non-streaming (Complete)
 	// path. Read per run so a profile/task toggle takes effect without rebuilding
 	// the agent. nil = streaming (default).
@@ -137,6 +138,19 @@ func (w *Worker) maxTokens() int {
 // SetConstraintInject wires a resolver deciding whether this task's operation
 // constraints get injected into the worker system prompt. nil = inject (default).
 func (w *Worker) SetConstraintInject(fn func() bool) { w.injectConstraints = fn }
+
+// SetGlobalGuardrails wires a resolver returning the operator's global guardrail text
+// (系统设置「约束与护栏」). Read per run, so editing the text takes effect on the next
+// run without rebuilding the agent. Empty string = nothing injected.
+func (w *Worker) SetGlobalGuardrails(fn func() string) { w.globalGuardrails = fn }
+
+// guardrailText returns the current global guardrail text ("" when unwired).
+func (w *Worker) guardrailText() string {
+	if w.globalGuardrails == nil {
+		return ""
+	}
+	return w.globalGuardrails()
+}
 
 // wantConstraints reports whether constraint injection is enabled (default yes).
 func (w *Worker) wantConstraints() bool { return w.injectConstraints == nil || w.injectConstraints() }
@@ -395,7 +409,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	overview := renderWorkerGraphOverview(tsx.graphOverviewData())
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
 	if w.wantConstraints() {
-		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
+		sysBody += constraintBlock(ts)                     // 操作约束(若有)注入系统提示,worker 执行时严格遵守
+		sysBody += globalGuardrailBlock(w.guardrailText()) // 全局护栏(平台级配置)注入系统提示
 	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
 	sysBody += renderIntentTask(intent)

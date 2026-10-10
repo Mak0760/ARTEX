@@ -725,6 +725,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/constraints", s.addConstraint)            // 约束管理:新增约束(不通知 planner)
 	mux.HandleFunc("PATCH /api/tasks/{id}/constraints/{cid}", s.editConstraint)    // 约束管理:修改约束
 	mux.HandleFunc("DELETE /api/tasks/{id}/constraints/{cid}", s.deleteConstraint) // 约束管理:删除约束
+	mux.HandleFunc("GET /api/constraints", s.listAllConstraints)                   // 约束与护栏总览:全部任务的操作约束(系统设置)
 	mux.HandleFunc("POST /api/tasks/{id}/control", s.control)
 	mux.HandleFunc("PUT /api/tasks/{id}/llm", s.updateTaskLLMProfiles)
 	mux.HandleFunc("GET /api/tasks/{id}/llm/resolution", s.taskLLMResolutionHandler)
@@ -3310,6 +3311,9 @@ func (s *Server) settingsPayload() map[string]any {
 		// 操作约束注入范围(默认都开):把本任务的 allow/deny 约束拼进对应 agent 的系统提示。
 		"constraints_inject_planner": s.constraintInjectPlanner(),
 		"constraints_inject_worker":  s.constraintInjectWorker(),
+		// 约束与护栏:总开关(默认开) + 全局护栏自定义文本(平台级,对所有任务生效)。
+		"guardrails_enabled": s.guardrailsEnabled(),
+		"guardrails_text":    s.guardrailsText(),
 		// 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent 由 noa
 		// 接管上下文压缩,取代内置 compaction;每 run 读一次,对之后启动的 run 生效。
 		"noa_compaction": s.m.NoaCompactionEnabled(),
@@ -3383,6 +3387,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 操作约束注入范围开关(默认都开);即时生效(planner/worker 每轮读),无需重建 agent。
 		ConstraintsInjectPlanner *bool `json:"constraints_inject_planner"`
 		ConstraintsInjectWorker  *bool `json:"constraints_inject_worker"`
+		// 约束与护栏:总开关 + 全局护栏自定义文本;两者都由 planner/worker 每轮读,即时生效。
+		GuardrailsEnabled *bool   `json:"guardrails_enabled"`
+		GuardrailsText    *string `json:"guardrails_text"`
 		// 实验功能:noa 上下文压缩开关(默认关);每 run 读,对之后启动的 run 生效,无需重建 agent。
 		NoaCompaction *bool `json:"noa_compaction"`
 		// 漏洞 IM 推送的全局项。三者都由投递引擎每轮读一次，改完即时生效，
@@ -3403,6 +3410,23 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConstraintsInjectWorker != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectWorker, *req.ConstraintsInjectWorker); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.GuardrailsEnabled != nil {
+		if err := s.m.pg.SetBool(settingGuardrailsEnabled, *req.GuardrailsEnabled); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.GuardrailsText != nil {
+		text := strings.TrimSpace(*req.GuardrailsText)
+		if len(text) > guardrailsTextMaxLen {
+			writeErr(w, 400, "全局护栏内容过长")
+			return
+		}
+		if err := s.m.pg.SetSetting(settingGuardrailsText, text); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

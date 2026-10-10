@@ -466,6 +466,13 @@ export interface TaskConstraint {
   ts?: string;
 }
 
+// AllTaskConstraint 是系统设置「约束与护栏」总览里的一行:某条任务约束 + 它所属的任务。
+export interface AllTaskConstraint extends TaskConstraint {
+  task_id?: string; // 任务已删除时为空
+  task_name?: string;
+  task_goal?: string;
+}
+
 // ---- Findings ----
 export type Severity = "critical" | "high" | "medium" | "low";
 
@@ -939,6 +946,9 @@ export interface Settings {
   // 操作约束注入范围(默认都开):把任务的 allow/deny 约束拼进对应 agent 的系统提示。
   constraints_inject_planner?: boolean;
   constraints_inject_worker?: boolean;
+  // 约束与护栏:总开关(默认开) + 全局护栏自定义文本(平台级,对所有任务生效)。
+  guardrails_enabled?: boolean;
+  guardrails_text?: string;
   // 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent(planner/
   // worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction;每 run 读一次,对
   // 之后启动的 run 生效。

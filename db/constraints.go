@@ -83,3 +83,38 @@ func (s *ExplorationStore) DeleteConstraint(id int64) error {
 	}
 	return nil
 }
+
+// TaskConstraintRow is one task_constraints row joined with its owning task. It backs
+// 系统设置「约束与护栏」, which lists every task's constraints in one place. TaskID/
+// TaskName/TaskGoal stay zero/empty when the row's task is gone (deleted).
+type TaskConstraintRow struct {
+	Constraint
+	TaskID   int64  `json:"task_id"`
+	TaskName string `json:"task_name,omitempty"`
+	TaskGoal string `json:"task_goal,omitempty"`
+}
+
+// ListAllConstraints returns every constraint of every live task, ordered by task
+// then allow-before-deny then id — a stable render order for the settings overview.
+func (d *DB) ListAllConstraints() ([]TaskConstraintRow, error) {
+	rows, err := d.Query(`
+SELECT c.id, c.kind, c.text, COALESCE(c.origin,''), c.created_at,
+       COALESCE(t.id, 0), COALESCE(t.name,''), COALESCE(t.goal,'')
+FROM task_constraints c
+LEFT JOIN tasks t ON t.exploration_id = c.exploration_id AND t.deleted_at IS NULL
+ORDER BY COALESCE(t.id, 0), (c.kind='deny'), c.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TaskConstraintRow
+	for rows.Next() {
+		var r TaskConstraintRow
+		if err := rows.Scan(&r.ID, &r.Kind, &r.Text, &r.Origin, &r.CreatedAt,
+			&r.TaskID, &r.TaskName, &r.TaskGoal); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

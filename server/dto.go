@@ -251,6 +251,15 @@ type ConstraintDTO struct {
 	TS     string `json:"ts,omitempty"`
 }
 
+// TaskConstraintDTO is one constraint row plus the task it belongs to, for the
+// 系统设置「约束与护栏」overview (every task's constraints in one list).
+type TaskConstraintDTO struct {
+	ConstraintDTO
+	TaskID   string `json:"task_id,omitempty"` // "" when the owning task is gone
+	TaskName string `json:"task_name,omitempty"`
+	TaskGoal string `json:"task_goal,omitempty"`
+}
+
 func taskNodeDTOs(in []*db.Node) []TaskNodeDTO {
 	out := make([]TaskNodeDTO, 0, len(in))
 	for _, n := range in {

@@ -35,6 +35,7 @@ type Planner struct {
 	webSearch         WebSearchOpts                          // web_search tool backend selection (off by default)
 	workDir           string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	injectConstraints func() bool                            // resolver: inject task operation constraints into system prompt? (nil = yes)
+	globalGuardrails  func() string                          // resolver: operator's global guardrail text ("" = none)
 	nonStreamingFn    func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
 	noaEnabledFn      func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
@@ -99,6 +100,19 @@ func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
 // constraints get injected into the planner system prompt. Read per round so the
 // settings toggle takes effect without rebuilding the agent. nil = inject (default).
 func (p *Planner) SetConstraintInject(fn func() bool) { p.injectConstraints = fn }
+
+// SetGlobalGuardrails wires a resolver returning the operator's global guardrail text
+// (系统设置「约束与护栏」). Read per round, so editing the text takes effect on the next
+// round without rebuilding the agent. Empty string = nothing injected.
+func (p *Planner) SetGlobalGuardrails(fn func() string) { p.globalGuardrails = fn }
+
+// guardrailText returns the current global guardrail text ("" when unwired).
+func (p *Planner) guardrailText() string {
+	if p.globalGuardrails == nil {
+		return ""
+	}
+	return p.globalGuardrails()
+}
 
 // wantConstraints reports whether constraint injection is enabled (default yes).
 func (p *Planner) wantConstraints() bool { return p.injectConstraints == nil || p.injectConstraints() }
@@ -392,7 +406,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
 	sysBody := plannerSystem(goal, p.workDir, taskDir)
 	if p.wantConstraints() {
-		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
+		sysBody += constraintBlock(ts)                     // 操作约束(若有)注入系统提示,框定探索边界
+		sysBody += globalGuardrailBlock(p.guardrailText()) // 全局护栏(平台级配置)注入系统提示
 	}
 	system, boundary := deferredSystem(sysBody, def)
 	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在

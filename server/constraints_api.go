@@ -18,16 +18,23 @@ import (
 const (
 	settingConstraintsInjectPlanner = "constraints_inject_planner"
 	settingConstraintsInjectWorker  = "constraints_inject_worker"
+	// 约束与护栏总开关(默认开):关闭后「全局护栏」与所有任务的操作约束一律不注入任何 agent。
+	settingGuardrailsEnabled = "guardrails_enabled"
+	// 全局护栏自定义文本:平台级自由文本,对所有任务生效,逐字拼进 planner/worker 系统提示。
+	settingGuardrailsText = "guardrails_text"
+	// 全局护栏文本上限(字节),防止一次粘贴把每轮系统提示撑爆。
+	guardrailsTextMaxLen = 20000
 )
 
 // constraintInjectPlanner / constraintInjectWorker 报告是否把操作约束注入对应 agent 的
 // 系统提示(默认开)。作为 resolver 传给 planner/worker,每轮读 → 改开关即时生效。
 func (s *Server) constraintInjectPlanner() bool {
-	return s.m.pg.GetBool(settingConstraintsInjectPlanner, true)
+	// 总开关关闭 = 一律不注入,不再看单 agent 开关。
+	return s.guardrailsEnabled() && s.m.pg.GetBool(settingConstraintsInjectPlanner, true)
 }
 
 func (s *Server) constraintInjectWorker() bool {
-	return s.m.pg.GetBool(settingConstraintsInjectWorker, true)
+	return s.guardrailsEnabled() && s.m.pg.GetBool(settingConstraintsInjectWorker, true)
 }
 
 // listConstraints 返回本任务的全部操作约束(allow 在前、deny 在后)。
@@ -174,4 +181,62 @@ func constraintDTOs(in []db.Constraint) []ConstraintDTO {
 		})
 	}
 	return out
+}
+
+// guardrailsEnabled reports the 约束与护栏 master switch (default on).
+func (s *Server) guardrailsEnabled() bool {
+	return s.m.pg.GetBool(settingGuardrailsEnabled, true)
+}
+
+// guardrailsText returns the stored global guardrail text, ignoring the master
+// switch — the settings UI must still show (and let you edit) the text while the
+// switch is off. Use globalGuardrails for what actually gets injected.
+func (s *Server) guardrailsText() string {
+	v, _, _ := s.m.pg.GetSetting(settingGuardrailsText)
+	return v
+}
+
+// globalGuardrails returns the text that ACTUALLY gets injected: empty when the
+// master switch is off, so "off" means one thing everywhere.
+func (s *Server) globalGuardrails() string {
+	if !s.guardrailsEnabled() {
+		return ""
+	}
+	return s.guardrailsText()
+}
+
+// listAllConstraints returns every task's operation constraints plus the current
+// global guardrails, for the 系统设置「约束与护栏」overview. Read-only aggregate: a
+// single constraint is still added/edited/deleted on its own task.
+func (s *Server) listAllConstraints(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	rows, err := s.m.pg.ListAllConstraints()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	out := make([]TaskConstraintDTO, 0, len(rows))
+	for _, c := range rows {
+		dto := TaskConstraintDTO{
+			ConstraintDTO: ConstraintDTO{
+				ID:     strconv.FormatInt(c.ID, 10),
+				Kind:   c.Kind,
+				Text:   c.Text,
+				Origin: c.Origin,
+				TS:     rfc3339(c.CreatedAt),
+			},
+			TaskName: c.TaskName,
+			TaskGoal: c.TaskGoal,
+		}
+		if c.TaskID > 0 {
+			dto.TaskID = strconv.FormatInt(c.TaskID, 10)
+		}
+		out = append(out, dto)
+	}
+	writeJSON(w, 200, map[string]any{
+		"constraints":        out,
+		"guardrails":         s.globalGuardrails(),
+		"guardrails_text":    s.guardrailsText(),
+		"guardrails_enabled": s.guardrailsEnabled(),
+	})
 }

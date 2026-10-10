@@ -11,9 +11,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { CHAT_SEND_MODE_OPTIONS, type ChatSendMode, setChatSendMode, useChatSendMode } from "@/lib/chat-send-mode";
-import type { Settings } from "@/lib/types";
+import type { AllTaskConstraint, AssetInterceptRule, InterceptRule, JudgeConfig, Settings } from "@/lib/types";
 
 import { UpdateCard } from "./_components/update-card";
 
@@ -41,6 +42,19 @@ export default function SystemSettingsPage() {
   // 操作约束注入范围(默认都开)。
   const [injectPlanner, setInjectPlanner] = React.useState(true);
   const [injectWorker, setInjectWorker] = React.useState(true);
+  // 约束与护栏:总开关 + 全局护栏自定义文本 + 全部任务约束总览。
+  const [guardrailsOn, setGuardrailsOn] = React.useState(true);
+  const [guardrailsText, setGuardrailsText] = React.useState("");
+  const [savingGuardrails, setSavingGuardrails] = React.useState(false);
+  const [allCons, setAllCons] = React.useState<AllTaskConstraint[]>([]);
+  const [loadingCons, setLoadingCons] = React.useState(false);
+  // 系统设置里的「硬拦截护栏」总览：拦截规则 / 全局资产黑名单 / 模型兜底审批 / 待审批。
+  const [interceptRules, setInterceptRules] = React.useState<InterceptRule[]>([]);
+  const [assetRules, setAssetRules] = React.useState<AssetInterceptRule[]>([]);
+  const [judgeCfg, setJudgeCfg] = React.useState<JudgeConfig | null>(null);
+  const [pendingCount, setPendingCount] = React.useState(0);
+  const [toolScopeCount, setToolScopeCount] = React.useState<number | null>(null);
+  const [loadingGuard, setLoadingGuard] = React.useState(false);
   // 实验功能:noa 上下文压缩(默认关)。
   const [noaCompaction, setNoaCompaction] = React.useState(false);
   // 纯前端偏好：不走 /api/settings，直接读写 localStorage。
@@ -59,6 +73,8 @@ export default function SystemSettingsPage() {
     setWorkers(String(s.workers ?? 3));
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
+    setGuardrailsOn(s.guardrails_enabled !== false);
+    setGuardrailsText(s.guardrails_text ?? "");
     setNoaCompaction(!!s.noa_compaction);
   }, []);
 
@@ -147,6 +163,70 @@ export default function SystemSettingsPage() {
       .setSettings({ constraints_inject_worker: v })
       .then(apply)
       .catch(() => setInjectWorker(!v)); // revert on failure
+  };
+
+  const loadAllConstraints = React.useCallback(() => {
+    setLoadingCons(true);
+    api
+      .allConstraints()
+      .then((r) => setAllCons(r.constraints))
+      .catch(() => undefined)
+      .finally(() => setLoadingCons(false));
+  }, []);
+
+  React.useEffect(() => {
+    void loadAllConstraints();
+  }, [loadAllConstraints]);
+
+  // 硬拦截护栏总览：一次并发拉齐规则/黑名单/兜底审批/待审批/覆盖工具，任一失败不影响其余。
+  const loadGuardrailsInfo = React.useCallback(() => {
+    setLoadingGuard(true);
+    Promise.allSettled([
+      api.interceptRules(),
+      api.assetInterceptRules(),
+      api.interceptGetJudgeConfig(),
+      api.interceptPending(),
+      api.interceptGetToolConfig(),
+    ])
+      .then(([r, a, j, pd, tc]) => {
+        if (r.status === "fulfilled") setInterceptRules(r.value);
+        if (a.status === "fulfilled") setAssetRules(a.value);
+        if (j.status === "fulfilled") setJudgeCfg(j.value);
+        if (pd.status === "fulfilled") setPendingCount(pd.value.length);
+        if (tc.status === "fulfilled") setToolScopeCount(tc.value.enabled_tools.length);
+      })
+      .finally(() => setLoadingGuard(false));
+  }, []);
+
+  React.useEffect(() => {
+    void loadGuardrailsInfo();
+  }, [loadGuardrailsInfo]);
+
+  const toggleGuardrails = (v: boolean) => {
+    setGuardrailsOn(v); // optimistic
+    api
+      .setSettings({ guardrails_enabled: v })
+      .then((s) => {
+        apply(s);
+        toast.success(v ? "已开启全局护栏与约束注入" : "已关闭全局护栏与约束注入（所有 Agent 不再看到约束）");
+      })
+      .catch((e) => {
+        setGuardrailsOn(!v); // revert on failure
+        toast.error(`保存失败：${(e as Error).message}`);
+      });
+  };
+
+  const saveGuardrails = () => {
+    setSavingGuardrails(true);
+    api
+      .setSettings({ guardrails_text: guardrailsText })
+      .then((s) => {
+        apply(s);
+        void loadAllConstraints();
+        toast.success("已保存全局护栏（下一轮规划/执行即生效）");
+      })
+      .catch((e) => toast.error(`保存失败：${(e as Error).message}`))
+      .finally(() => setSavingGuardrails(false));
   };
 
   const toggleNoaCompaction = (v: boolean) => {
@@ -367,6 +447,168 @@ export default function SystemSettingsPage() {
         <Card className="mb-4 break-inside-avoid md:mb-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlertIcon className="size-4" />
+              全局护栏 · 自定义
+              <span className="text-muted-foreground text-xs font-normal">总开关 + 平台级约束文本 + 全部约束总览</span>
+            </CardTitle>
+            <CardDescription>
+              集中管理「约束与护栏」：<b>总开关</b>关掉后，全局护栏与所有任务的操作约束一律不注入任何 Agent（约束仍保留，只是不再进提示）。
+              <br />
+              <b>全局护栏</b>是你自己写的平台级边界文本，对所有任务生效，逐字拼进 planner / worker 的系统提示（如「禁止对生产库做写操作」「所有目标禁止口令爆破」）。改动下一轮规划/执行生效，无需重建 Agent。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="guardrails-enabled" className="text-sm font-normal text-muted-foreground">
+                总开关（全局护栏 + 全部任务约束注入）{guardrailsOn ? " · 已开启" : " · 已关闭"}
+              </Label>
+              <Switch
+                id="guardrails-enabled"
+                checked={guardrailsOn}
+                disabled={!loaded}
+                onCheckedChange={toggleGuardrails}
+              />
+            </div>
+
+            <div className="flex flex-col gap-2 border-t pt-4">
+              <Label htmlFor="guardrails-text" className="text-sm font-normal text-muted-foreground">
+                全局护栏内容（平台级 · 对所有任务生效）
+              </Label>
+              <Textarea
+                id="guardrails-text"
+                className="min-h-32 font-mono text-sm"
+                placeholder={"一条一行，例如：\n- 禁止对生产环境做写/删操作\n- 所有目标禁止口令爆破\n- 只允许被动侦察，不做主动扫描"}
+                value={guardrailsText}
+                disabled={!loaded || savingGuardrails}
+                onChange={(e) => setGuardrailsText(e.target.value)}
+              />
+              <div className="flex items-center gap-2">
+                <Button onClick={saveGuardrails} disabled={!loaded || savingGuardrails}>
+                  {savingGuardrails ? "保存中…" : "保存全局护栏"}
+                </Button>
+                <span className="text-muted-foreground text-xs">留空 = 不注入全局护栏（仍按任务约束走）。</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t pt-4">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-sm font-normal text-muted-foreground">
+                  全部任务的操作约束（{allCons.length} 条）
+                </Label>
+                <Button variant="outline" size="sm" onClick={() => void loadAllConstraints()} disabled={loadingCons}>
+                  {loadingCons ? "刷新中…" : "刷新"}
+                </Button>
+              </div>
+              {allCons.length === 0 ? (
+                <p className="text-muted-foreground text-xs">
+                  暂无任务操作约束。约束在任务详情「总览 → 操作约束」里维护，建任务时也会从目标/描述自动抽取。
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {allCons.map((c) => (
+                    <div key={`${c.task_id}-${c.id}`} className="rounded-md border px-2.5 py-1.5 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={
+                            c.kind === "allow"
+                              ? "rounded bg-emerald-500/10 px-1.5 text-xs text-emerald-600"
+                              : "rounded bg-red-500/10 px-1.5 text-xs text-red-600"
+                          }
+                        >
+                          {c.kind === "allow" ? "允许" : "禁止"}
+                        </span>
+                        <span className="flex-1 break-all">{c.text}</span>
+                        <span className="text-muted-foreground text-xs">
+                          {c.origin ? `${c.origin} · ` : ""}
+                          {c.task_id ? (
+                            <a className="underline" href={`/function/tasks/detail/?id=${c.task_id}`}>
+                              任务 #{c.task_id}
+                            </a>
+                          ) : (
+                            "任务已删除"
+                          )}
+                        </span>
+                      </div>
+                      {c.task_goal ? (
+                        <div className="text-muted-foreground mt-0.5 truncate text-xs">目标：{c.task_goal}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2 border-t pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label className="text-sm font-normal text-muted-foreground">
+                  硬拦截护栏（系统 → 拦截：规则命中会真的拦住工具调用，走放行 / 转人工审批 / 拒绝）
+                </Label>
+                <div className="flex items-center gap-3">
+                  <a className="text-xs underline" href="/system/intercept/">去编辑</a>
+                  <Button variant="outline" size="sm" onClick={() => void loadGuardrailsInfo()} disabled={loadingGuard}>
+                    {loadingGuard ? "刷新中…" : "刷新"}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-muted-foreground text-xs">
+                拦截规则 {interceptRules.length} 条（启用 {interceptRules.filter((r) => r.enabled).length}）· 全局资产黑名单{" "}
+                {assetRules.length} 条（启用 {assetRules.filter((a) => a.enabled).length}）· 模型兜底审批 
+                {judgeCfg ? (judgeCfg.enabled ? `已开启（失败回退 ${judgeCfg.fail_action}）` : "未开启") : "未知"} · 待人工审批 
+                {pendingCount} 条{toolScopeCount === null ? "" : ` · 覆盖工具 ${toolScopeCount} 个`}
+              </p>
+              {interceptRules.length === 0 ? (
+                <p className="text-muted-foreground text-xs">暂无拦截规则（内置规则也是普通规则，可停用或删除）。</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {interceptRules.map((r) => (
+                    <div key={r.id} className="rounded-md border px-2.5 py-1.5 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={r.enabled ? "text-xs text-emerald-600" : "text-muted-foreground text-xs"}>{r.enabled ? "启用" : "停用"}</span>
+                        <span
+                          className={
+                            r.action === "deny"
+                              ? "rounded bg-red-500/10 px-1.5 text-xs text-red-600"
+                              : r.action === "ask"
+                                ? "rounded bg-amber-500/10 px-1.5 text-xs text-amber-600"
+                                : "rounded bg-emerald-500/10 px-1.5 text-xs text-emerald-600"
+                          }
+                        >
+                          {r.action === "deny" ? "拒绝" : r.action === "ask" ? "转人工" : "放行"}
+                        </span>
+                        {r.name.StartsWith("[内置]") ? (
+                          <span className="bg-muted text-muted-foreground rounded px-1.5 text-xs" title="系统预置（也是普通规则，可停用/删除）">内置</span>
+                        ) : (
+                          <span className="rounded bg-sky-500/10 px-1.5 text-xs text-sky-600">自定义</span>
+                        )}
+                        <span className="font-medium">{r.name}</span>
+                        <span className="text-muted-foreground text-xs">
+                          优先级 {r.priority} · {r.match_target}/{r.match_type}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 font-mono text-xs break-all">{r.pattern}</div>
+                      {r.message ? <div className="text-muted-foreground mt-0.5 text-xs">说明：{r.message}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {assetRules.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  <span className="text-muted-foreground text-xs">全局资产黑名单：</span>
+                  {assetRules.map((a) => (
+                    <div key={a.id} className="text-xs">
+                      {a.enabled ? "启用" : "停用"} · {a.kind} · <span className="font-mono">{a.pattern}</span>
+                      {a.note ? ` · ${a.note}` : ""}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+
               <ShieldAlertIcon className="size-4" />
               操作约束注入
             </CardTitle>
