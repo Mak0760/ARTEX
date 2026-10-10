@@ -444,10 +444,7 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="mb-4 break-inside-avoid md:mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-        <Card className="mb-4 break-inside-avoid md:mb-6">
+<Card className="mb-4 break-inside-avoid md:mb-6 lg:[column-span:all]">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <ShieldAlertIcon className="size-4" />
@@ -507,7 +504,7 @@ export default function SystemSettingsPage() {
                   暂无任务操作约束。约束在任务详情「总览 → 操作约束」里维护，建任务时也会从目标/描述自动抽取。
                 </p>
               ) : (
-                <div className="flex flex-col gap-2">
+                <div className="flex max-h-56 flex-col gap-2 overflow-y-auto pr-1">
                   {allCons.map((c) => (
                     <div key={`${c.task_id}-${c.id}`} className="rounded-md border px-2.5 py-1.5 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
@@ -562,7 +559,7 @@ export default function SystemSettingsPage() {
               {interceptRules.length === 0 ? (
                 <p className="text-muted-foreground text-xs">暂无拦截规则（内置规则也是普通规则，可停用或删除）。</p>
               ) : (
-                <div className="flex flex-col gap-1.5">
+                <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
                   {interceptRules.map((r) => (
                     <div key={r.id} className="rounded-md border px-2.5 py-1.5 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
@@ -578,7 +575,7 @@ export default function SystemSettingsPage() {
                         >
                           {r.action === "deny" ? "拒绝" : r.action === "ask" ? "转人工" : "放行"}
                         </span>
-                        {r.name.StartsWith("[内置]") ? (
+                        {r.name.startsWith("[内置]") ? (
                           <span className="bg-muted text-muted-foreground rounded px-1.5 text-xs" title="系统预置（也是普通规则，可停用/删除）">内置</span>
                         ) : (
                           <span className="rounded bg-sky-500/10 px-1.5 text-xs text-sky-600">自定义</span>
@@ -595,11 +592,11 @@ export default function SystemSettingsPage() {
                 </div>
               )}
               {assetRules.length > 0 ? (
-                <div className="flex flex-col gap-1">
+                <div className="flex max-h-32 flex-col gap-1 overflow-y-auto pr-1">
                   <span className="text-muted-foreground text-xs">全局资产黑名单：</span>
                   {assetRules.map((a) => (
                     <div key={a.id} className="text-xs">
-                      {a.enabled ? "启用" : "停用"} · {a.kind} · <span className="font-mono">{a.pattern}</span>
+                      {a.enabled ? "启用" : "停用"} · {a.kind} · <span className="font-mono break-all">{a.pattern}</span>
                       {a.note ? ` · ${a.note}` : ""}
                     </div>
                   ))}
@@ -608,6 +605,10 @@ export default function SystemSettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
 
               <ShieldAlertIcon className="size-4" />
               操作约束注入
